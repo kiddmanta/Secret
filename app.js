@@ -31,7 +31,8 @@ mongoose.connect("mongodb://127.0.0.1:27017/userDB" ,{useNewUrlParser : true});
 const userSchema = new mongoose.Schema({
     username : String,
     password: String,
-    googleId : String
+    googleId : String,
+    secret : String
 });
 
 userSchema.plugin(passportLocalMongoose);
@@ -42,20 +43,21 @@ const User = new mongoose.model("User",userSchema);
 
 passport.use(User.createStrategy());
 
-passport.serializeUser(function(user, done) {
-    done(null, user.id); 
-   // where is this user.id going? Are we supposed to access this anywhere?
-});
-
-// used to deserialize the user
-passport.deserializeUser(function(id, done) {
-    User.findById(id).then(function( user) {
-        done(err, user);
-    }).catch(function(err){
-        console.log(err);
+passport.serializeUser(function(user, cb) {
+    process.nextTick(function() {
+      return cb(null, {
+        id: user.id,
+        username: user.username,
+        picture: user.picture
+      });
     });
-});
-
+  });
+  
+  passport.deserializeUser(function(user, cb) {
+    process.nextTick(function() {
+      return cb(null, user);
+    });
+  });
 passport.use(new GoogleStrategy({
     clientID: process.env.CLIENT_ID,
     clientSecret: process.env.CLIENT_SECRET,
@@ -73,16 +75,14 @@ passport.use(new GoogleStrategy({
 ));
 
 app.post("/register",function(req,res){
-    User.register({username : req.body.username}, req.body.password ,function(err,user){
-        if(err){
-            console.log(err);
-            res.redirect("/register");
-        }
-        else{
+    User.register({username : req.body.username}, req.body.password ).then(function(user){
+        
             passport.authenticate("local")(req,res,function(){
                 res.redirect("/secrets");
             })
-        }
+        
+    }).catch(function(err){
+        res.redirect("/register");
     })
     
 })
@@ -110,6 +110,30 @@ app.get("/",function(req,res){
     res.render("home");
 });
 
+app.get("/submit",function(req,res){
+    if(req.isAuthenticated()){
+        res.render("submit");
+    }
+    else{
+        res.redirect("/login");
+    }
+})
+
+app.post("/submit",function(req,res){
+    const subs = req.body.secret;
+    console.log(req.user)
+
+    User.findById(req.user.id).then(function(user){
+        if(user){
+            user.secret = subs;
+            user.save().then(function(){
+                res.redirect("/secrets");
+            })
+        }
+    }).catch(function(err){
+        console.log(err);
+    })
+})
 
 app.get('/auth/google',
   passport.authenticate('google', { scope: ["profile"] }));
@@ -133,12 +157,11 @@ app.get("/register",function(req,res){
 })
 
 app.get("/secrets",function(req,res){
-    if(req.isAuthenticated()){
-        res.render("secrets");
-    }
-    else{
-        res.redirect("/login");
-    }
+    User.find({"secret": {$ne:null}}).then(function(user){
+        res.render("secrets", {userWiths: user})
+    }).catch(function(err){
+        console.log(err);
+    })
 })
 
 app.get("/logout",function(req,res){
